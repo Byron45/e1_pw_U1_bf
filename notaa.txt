@@ -1,0 +1,322 @@
+‎name: examen-pd-prestamos
+‎services:
+‎  db-server:
+‎    image: postgres:17.10-alpine3.24
+‎    environment:
+‎      POSTGRES_USER: postgres
+‎      POSTGRES_PASSWORD: Aucas1945
+‎      POSTGRES_DB: prestamos
+‎    volumes:
+· ‎postgres-data:/var/lib/postgresql/data
+‎    ports:
+· ‎5432:5432
+‎
+‎  consul:
+‎    image: consul:1.15.4
+‎    command: |
+‎      agent -dev
+‎      -ui
+‎      -bind 0.0.0.0
+‎      -client 0.0.0.0
+‎    ports:
+· ‎8500:8500
+‎
+‎  proxy:
+‎    image: traefik:3.7.5
+‎    command: |
+‎      --api.insecure=true
+‎      --api.dashboard=true
+‎      --providers.consulCatalog
+‎      --providers.consulCatalog.endpoint.address=consul:8500
+‎      --providers.consulCatalog.exposedByDefault=false
+‎      --providers.consulCatalog.refreshInterval=5s
+‎    ports:
+· ‎8888:8080
+· ‎8080:80
+‎
+‎  app-clientes:
+‎    build:
+‎      context: ../../app-clientes
+‎      dockerfile: src/main/docker/Dockerfile.jvm
+‎    container_name: clientes-app
+‎    ports:
+· ‎8081:8080
+‎    environment:
+‎      QUARKUS_DATASOURCE_JDBC_URL: jdbc:postgresql://db-server:5432/prestamos
+‎      QUARKUS_DATASOURCE_USERNAME: postgres
+‎      QUARKUS_DATASOURCE_PASSWORD: Aucas1945
+‎      QUARKUS_HTTP_PORT: 8080
+‎      CONSUL_HOST: consul
+‎      CONSUL_PORT: 8500
+‎      QUARKUS_FLYWAY_MIGRATE_AT_START: "true"
+‎    depends_on:
+· ‎db-server
+· ‎consul
+‎
+‎  app-prestamos:
+‎    build:
+‎      context: ../../app-prestamos
+‎      dockerfile: src/main/docker/Dockerfile.jvm
+‎    container_name: prestamos-app
+‎    environment:
+‎      QUARKUS_DATASOURCE_JDBC_URL: jdbc:postgresql://db-server:5432/prestamos
+‎      QUARKUS_DATASOURCE_USERNAME: postgres
+‎      QUARKUS_DATASOURCE_PASSWORD: Aucas1945
+‎      QUARKUS_HTTP_PORT: 8080
+‎      CONSUL_HOST: consul
+‎      CONSUL_PORT: 8500
+‎    depends_on:
+· ‎db-server
+· ‎consul
+‎
+‎volumes:
+‎  postgres-data:
+‎
+‎
+‎
+‎
+‎plugins {
+‎    id("java")
+‎    id("io.quarkus") version "3.35.2"
+‎    id("io.freefair.lombok") version "9.2.0"
+‎}
+‎
+‎group = "uce.edu.ec"
+‎version = "unspecified"
+‎
+‎repositories {
+‎    mavenCentral()
+‎}
+‎
+‎val quarkusVersion = "3.35.2"
+‎
+‎java {
+‎    sourceCompatibility = JavaVersion.VERSION_25
+‎    targetCompatibility = JavaVersion.VERSION_25
+‎}
+‎
+‎dependencies {
+‎    implementation(enforcedPlatform("io.quarkus.platform:quarkus-bom:$quarkusVersion"))
+‎
+‎    //CDI
+‎    implementation("io.quarkus:quarkus-arc")
+‎
+‎    //REST
+‎    implementation("io.quarkus:quarkus-rest")
+‎    implementation("io.quarkus:quarkus-rest-jsonb")
+‎    implementation("io.quarkus:quarkus-hibernate-orm")
+‎    implementation("io.quarkus:quarkus-hibernate-orm-panache")
+‎    implementation("io.quarkus:quarkus-jdbc-postgresql")
+‎
+‎    //FLYWAY
+‎    implementation("io.quarkus:quarkus-flyway:3.35.2")
+‎    runtimeOnly("org.flywaydb:flyway-database-postgresql:12.5.0")
+‎
+‎    //SERVICIOS REST
+‎    implementation("io.quarkus:quarkus-rest-client-jsonb")
+‎    implementation("io.quarkus:quarkus-rest-client")
+‎
+‎    implementation("org.modelmapper:modelmapper:3.2.6")
+‎
+‎    //Service Discovery
+‎    implementation("io.quarkus:quarkus-smallrye-stork")
+‎    implementation("io.smallrye.reactive:smallrye-mutiny-vertx-consul-client")
+‎    implementation("io.smallrye.stork:stork-service-discovery-consul")
+‎
+‎    //Resilience
+‎    implementation("io.quarkus:quarkus-smallrye-fault-tolerance")
+‎    
+‎}
+‎
+‎tasks.test {
+‎    useJUnitPlatform()
+‎}
+‎
+‎
+‎
+‎
+‎quarkus.datasource.db-kind=postgresql
+‎quarkus.datasource.jdbc.url=jdbc:postgresql://localhost:5432/prestamos
+‎quarkus.datasource.username=postgres
+‎quarkus.datasource.password=Aucas1945
+‎quarkus.http.port=8080
+‎quarkus.http.host=0.0.0.0
+‎# Run flyway migration automatically at startup
+‎quarkus.flyway.migrate-at-start=true
+‎#quarkus.package.jar.type = uber-jar
+‎
+‎quarkus.stork.prestamos-api.service-discovery.type=consul
+‎quarkus.stork.prestamos-api.service-discovery.consul-host=${consul.host}
+‎quarkus.stork.prestamos-api.service-discovery.consul-port=${consul.port}
+‎quarkus.stork.prestamos-api.service-discovery.application=app-prestamos
+‎quarkus.stork.prestamos-api.service-discovery.refresh-period=5s
+‎
+‎#--CORS
+‎quarkus.http.cors.enabled=true
+‎quarkus.http.cors.origins=/.*/
+‎quarkus.http.cors.methods=GET,POST,PUT,DELETE
+‎
+‎
+‎
+‎
+‎package com.uce.ec.clientes;
+‎
+‎import io.quarkus.runtime.ShutdownEvent;
+‎import io.quarkus.runtime.StartupEvent;
+‎import io.vertx.core.Vertx;
+‎import io.vertx.ext.consul.CheckOptions;
+‎import io.vertx.ext.consul.ConsulClient;
+‎import io.vertx.ext.consul.ConsulClientOptions;
+‎import io.vertx.ext.consul.ServiceOptions;
+‎import jakarta.enterprise.context.ApplicationScoped;
+‎import jakarta.enterprise.event.Observes;
+‎import jakarta.inject.Inject;
+‎import org.eclipse.microprofile.config.inject.ConfigProperty;
+‎
+‎import java.net.InetAddress;
+‎import java.util.List;
+‎
+‎@ApplicationScoped
+‎public class ClienteLifeCycle {
+‎
+‎    @Inject
+‎    @ConfigProperty(name = "consul.host", defaultValue = "127.0.0.1")
+‎    String consultHost;
+‎
+‎    @Inject
+‎    @ConfigProperty(name = "consul.port", defaultValue = "8500")
+‎    Integer consulPort;
+‎
+‎    @Inject
+‎    @ConfigProperty(name = "quarkus.http.port", defaultValue = "8080")
+‎    Integer appPort;
+‎
+‎    String ipAddress;
+‎    String serviceId;
+‎
+‎    public void init(@Observes StartupEvent event, Vertx vertx) {
+‎        try {
+‎            System.out.println("ClientesLifeCycle init");
+‎            ConsulClientOptions options = new ConsulClientOptions()
+‎                    .setHost(consultHost)
+‎                    .setPort(consulPort);
+‎            ConsulClient client = ConsulClient.create(vertx, options);
+‎            String ipAddress = InetAddress.getLocalHost().getHostAddress();
+‎
+‎            serviceId = "app-clientes-%s:%d".formatted(ipAddress, appPort);
+‎
+‎            var urlCheck = "http://%s:%d/ping".formatted(ipAddress, appPort);
+‎            CheckOptions checkOptions = new CheckOptions()
+‎                    .setHttp(urlCheck)
+‎                    .setInterval("10s")
+‎                    .setDeregisterAfter("10s");
+‎
+‎            var tags = List.of(
+‎                    "traefik.enable=true",
+‎                    "traefik.http.routers.router-app-clientes.rule=PathPrefix(`/app-clientes`)",
+‎                    "traefik.http.routers.router-app-clientes.middlewares=middleware-clientes",
+‎                    "traefik.http.middlewares.middleware-clientes.stripprefix.prefixes=/app-clientes"
+‎            );
+‎
+‎            ServiceOptions serviceOptions = new ServiceOptions()
+‎                    .setName("app-clientes")
+‎                    .setId(serviceId)
+‎                    .setAddress(ipAddress)
+‎                    .setPort(appPort)
+‎                    .setCheckOptions(checkOptions)
+‎                    .setTags(tags);
+‎
+‎            client.registerService(serviceOptions)
+‎                    .onSuccess(it -> System.out.println("Clientes service registered in consul with ID" + serviceId))
+‎                    .onFailure(it -> {
+‎                        System.out.println("Failed to register Clientes service in consul: ");
+‎                    });
+‎        } catch (Exception e) {
+‎            e.printStackTrace();
+‎        }
+‎    }
+‎
+‎    public void destroy(@Observes ShutdownEvent event, Vertx vertx) {
+‎        System.out.println("ClientesLifeCycle destroy");
+‎        ConsulClientOptions options = new ConsulClientOptions()
+‎                .setHost(consultHost)
+‎                .setPort(consulPort);
+‎        ConsulClient client = ConsulClient.create(vertx, options);
+‎        client.deregisterService(serviceId)
+‎                .onSuccess(it -> System.out.println("Clientes service deregister from Consul with ID: " + serviceId))
+‎                .onFailure(it -> System.out.println("Failed to deregister Clientes service from Consul" + it.getMessage()));
+‎    }
+‎}
+‎
+
+
+FROM docker.io/eclipse-temurin:25.0.3_9-jre-alpine
+
+ENV LANGUAGE='en_US:en'
+
+RUN mkdir /app
+WORKDIR /app
+
+
+COPY build/quarkus-app/lib ./lib
+COPY build/quarkus-app/quarkus ./quarkus
+COPY build/quarkus-app/app ./app
+COPY build/quarkus-app/quarkus-run.jar app.jar
+
+CMD ["java", "-jar", "app.jar"]
+
+
+
+package com.uce.ec.clientes.rest;
+
+import com.uce.ec.clientes.clients.PrestamoRestClient;
+import com.uce.ec.clientes.dtos.ClienteResumenDto;
+import com.uce.ec.clientes.repo.ClienteRepository;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
+import jakarta.transaction.Transactional;
+import jakarta.ws.rs.*;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
+import org.eclipse.microprofile.rest.client.inject.RestClient;
+
+@Path("/clientes")
+@Produces(MediaType.APPLICATION_JSON)
+@Consumes(MediaType.APPLICATION_JSON)
+@Transactional
+@ApplicationScoped
+public class ClienteRest {
+
+    final ClienteRepository clienteRepository;
+    final PrestamoRestClient prestamosClient;
+
+    @Inject
+    public ClienteRest(ClienteRepository clienteRepository,
+                       @RestClient PrestamoRestClient prestamosClient) {
+        this.clienteRepository = clienteRepository;
+        this.prestamosClient = prestamosClient;
+    }
+
+    @GET
+    @Path("/{cedula}/prestamos")
+    public Response findPrestamosByCedula(@PathParam("cedula") String cedula) {
+        return clienteRepository.findByCedula(cedula)
+                .map(cliente -> {
+                    var prestamos = prestamosClient.findByCliente(cliente.getId());
+
+                    double montoTotal = prestamos.stream()
+                            .mapToDouble(p -> p.getMonto_total() != null ? p.getMonto_total() : 0.0)
+                            .sum();
+
+                    return ClienteResumenDto.builder()
+                            .cedula(cliente.getCedula())
+                            .email(cliente.getEmail())
+                            .montoTotalPrestamos(montoTotal)
+                            .prestamos(prestamos)
+                            .build();
+                })
+                .map(Response::ok)
+                .orElse(Response.status(Response.Status.NOT_FOUND))
+                .build();
+    }
+}
